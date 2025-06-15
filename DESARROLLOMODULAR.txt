@@ -1,0 +1,122 @@
+Descripción de módulos
+1. ExplorerModule.lua
+Responsabilidad:
+
+Generar islas flotantes procedurales (datos de reliquias, rarezas).
+
+Manejar mecánica de “clics” y bots de excavación offline.
+
+Exponer funciones: StartExploration(player, islandId), CollectResource(player, nodeId), CalculateOfflineYield(player, hours).
+
+Puntos de expansión:
+
+Agregar eventos de exploración cooperativa.
+
+Integrar scripts de geografía y obstáculos dinámicos.
+
+2. TycoonModule.lua
+Responsabilidad:
+
+Gestión de base de operaciones: construcción y upgrades de talleres.
+
+Slots de bots de excavación.
+
+Multiplicadores pasivos por edificio.
+
+API pública: BuildStructure(player, structureType), UpgradeStructure(player, structureId).
+
+Puntos de expansión:
+
+Nuevos edificios (refinerías avanzadas).
+
+Integración con sistema de niveles de jugador.
+
+3. EconomyModule.lua
+Responsabilidad:
+
+Control de monedas arcanas, reliquias doradas y gemas eternas.
+
+Persistencia de datos (DataStore).
+
+Funciones: AddCurrency(player, type, amount), SpendCurrency(player, type, amount), GetBalance(player, type).
+
+Puntos de expansión:
+
+Sistema de intercambio entre jugadores.
+
+Mercado dinámico con fluctuación de precios.
+
+4. LootSystemModule.lua
+Responsabilidad:
+
+Generar cofres arcanos con probabilidades definibles.
+
+Implementar pity counter.
+
+API: OpenChest(player, chestType) → item, rarity.
+
+Puntos de expansión:
+
+Cofres temáticos de eventos.
+
+Mecánicas de crafting de reliquias.
+
+5. PrestigeModule.lua
+Responsabilidad:
+
+Lógica de “Rebirth”: reset parcial de progreso a cambio de gemas.
+
+Cálculo de bonificaciones acumuladas (+% al ingreso).
+
+Métodos: CanPrestige(player), DoPrestige(player).
+
+Puntos de expansión:
+
+Ramas de prestigio (rutas de talentos).
+
+Logros y recompensas exclusivas.
+
+6. MissionsModule.lua
+Responsabilidad:
+
+Generar y rastrear misiones diarias y retos semanales.
+
+Recompensas en boosters o gemas.
+
+Interfaces: GetDailyMissions(player), CompleteMission(player, missionId).
+
+Puntos de expansión:
+
+Módulo de logros a largo plazo.
+
+Integración con tablas de líderes.
+
+7. UIManager.lua
+Responsabilidad:
+
+Construir menús: tienda, inventario, ranking, HUD de recursos.
+
+Manejar notificaciones de tiempo limitado (ofertas, boosters).
+
+Hooks: ShowPopup(type, data), UpdateDashboard(player).
+
+Puntos de expansión:
+
+Skins de UI desbloqueables.
+
+Personalización por suscripción VIP.
+
+8. MonetizationModule.lua
+Responsabilidad:
+
+Exponer paquetes de microtransacciones (gems packs, boosters).
+
+Integrar con EconomyModule y DataStore.
+
+Funciones: PurchasePackage(player, packageId), GrantPromo(player, promoId).
+
+Puntos de expansión:
+
+Suscripciones mensuales y anuales.
+
+Promociones de eventos (Halloween, Navidad).
