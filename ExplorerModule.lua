@@ -1,136 +1,186 @@
-Ayudame a detectar bugs y fallos en mi codigo para un juego de roblox en el lenguaje "LUA". Codigo explorer module: "-- ModuleScript: src/Modules/ExplorerModule.lua 
--- Nota: "src" es la carpeta raíz de tu proyecto de código.
--- Estructura en Roblox Studio:
--- ServerScriptService/src/Modules/ExplorerModule (ModuleScript)
--- ReplicatedStorage/ExplorerRemotes (Folder) con RemoteFunctions:
---    • CollectResource
---    • CalculateOfflineYield
--- ServerScriptService/ExplorerInit.server (Script) para inicializar el módulo.
+-- File: ServerScriptService/src/Modules/ExplorerModule.lua
+-- Responsabilidades:
+--  - Generar islas flotantes procedurales (datos de reliquias, rarezas)
+--  - Manejar mecánica de clics y bots de excavación offline
+--  - Integrar EconomyModule para recompensar ArcaneCoins
+-- API pública:
+--    StartExploration(player, islandId)
+--    CollectResource(player, nodeId)
+--    CalculateOfflineYield(player, hours)
 
-local DataStoreService = game:GetService("DataStoreService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
+local DataStoreService   = game:GetService("DataStoreService")
+local ReplicatedStorage  = game:GetService("ReplicatedStorage")
+local RunService         = game:GetService("RunService")
 
--- DataStores separados:
--- Para estado de jugador
-local playerStateStore = DataStoreService:GetDataStore("ExplorerState")
--- (Opcional) Para definiciones de islas si quieres persistirlas
--- local islandDefStore = DataStoreService:GetDataStore("IslandDefinitions")
+-- Requerir EconomyModule
+local srcFolder      = game.ServerScriptService:WaitForChild("src")
+local modulesFolder  = srcFolder:WaitForChild("Modules")
+local EconomyModule  = require(modulesFolder:WaitForChild("EconomyModule"))
 
--- Remotes en ReplicatedStorage
-local explorerRemotes   = ReplicatedStorage:WaitForChild("ExplorerRemotes")
-local CollectResourceRF = explorerRemotes:WaitForChild("CollectResource") :: RemoteFunction
-local OfflineYieldRF    = explorerRemotes:WaitForChild("CalculateOfflineYield") :: RemoteFunction
+local explorerRemotes    = ReplicatedStorage:WaitForChild("ExplorerRemotes")
+local StartExplorationRF = explorerRemotes:WaitForChild("StartExploration")
+local CollectResourceRF  = explorerRemotes:WaitForChild("CollectResource")
+local OfflineYieldRF     = explorerRemotes:WaitForChild("CalculateOfflineYield")
+local ResourceCollectedRE = explorerRemotes:WaitForChild("ResourceCollected")
 
--- Definición del módulo
 local ExplorerModule = {}
 ExplorerModule.__index = ExplorerModule
 
--- Señal para eventos colaborativos (BindableEvent)
-ExplorerModule.OnIslandDiscovered = Instance.new("BindableEvent")
+-- Evento OnIslandDiscovered
+local OnIslandDiscovered = Instance.new("BindableEvent")
+OnIslandDiscovered.Name   = "OnIslandDiscovered"
+OnIslandDiscovered.Parent = ReplicatedStorage
+ExplorerModule.OnIslandDiscovered = OnIslandDiscovered
 
--- Tabla local con definiciones de islas (mismo para todos los jugadores)
-local islandDefinitions = {}
+-- Definiciones de rarezas
+local RarityDefs = {
+	["Comun"] = { dropRate = 50, minReward = 5,   maxReward = 10,  color = BrickColor.new("Medium stone grey"), icon = "Icon_Comun" },
+	["PocoComun"] = { dropRate = 30, minReward = 11,  maxReward = 25,  color = BrickColor.new("Bright green"),   icon = "Icon_PocoComun" },
+	["Rara"] = { dropRate = 15, minReward = 26,  maxReward = 60,  color = BrickColor.new("Bright blue"),    icon = "Icon_Rara" },
+	["Épica"] = { dropRate = 5,  minReward = 61,  maxReward = 150, color = BrickColor.new("Bright violet"), icon = "Icon_Epica" },
+}
 
---[[
-    Genera un conjunto de islas con nodos de excavación aleatorios
-    Almacena en tabla local islandDefinitions y dispara OnIslandDiscovered
-    @param numIslands number Cantidad de islas a generar
-    @return islandData table Lista de tables con info de cada isla
-]]
+-- Datos de islas y exploraciones por jugador
+globalIslandDefs   = {}
+local playerExplorations = {}
+
+-- Selecciona una rareza basado en drop rates
+local function pickRarity()
+	local roll = math.random(1, 100)
+	local cumulative = 0
+	for name, def in pairs(RarityDefs) do
+		cumulative = cumulative + def.dropRate
+		if roll <= cumulative then
+			return name
+		end
+	end
+	return "Comun"
+end
+
+-- Genera definiciones de islas (datos)
 function ExplorerModule:GenerateIslands(numIslands)
-	islandDefinitions = {}
+	globalIslandDefs = {}
 	for i = 1, numIslands do
 		local id = "isla" .. i
-		-- Ejemplo de nodos; reemplazar lógica de rareza/tipo
 		local nodes = {}
 		for j = 1, 5 do
+			local rarity = pickRarity()
 			table.insert(nodes, {
-				nodeId = id .. "_nodo" .. j,
-				type = "ReliquiaBasica",
-				rarity = math.random(1, 100) <= 10 and "Rara" or "Comun",
+				nodeId   = id .. "_nodo" .. j,
+				type     = "ReliquiaBasica",
+				rarity   = rarity,
+				color    = RarityDefs[rarity].color,
+				icon     = RarityDefs[rarity].icon,
 				depleted = false,
 			})
 		end
-		local island = { id = id, nodes = nodes }
-		table.insert(islandDefinitions, island)
-		-- Disparar evento cooperativo para cada isla (sin lista de jugadores específica aún)
+		table.insert(globalIslandDefs, { id = id, nodes = nodes })
 		ExplorerModule.OnIslandDiscovered:Fire({}, id)
 	end
-	return islandDefinitions
+	return globalIslandDefs
 end
 
---[[
-    Recolecta manualmente recursos al hacer clic en un nodo
-    Valida activo y no agotado, marca agotado y devuelve recompensa
-    @param player Player Jugador que realiza la acción
-    @param islandId string Identificador de isla
-    @param nodeId string Identificador de nodo
-    @return number Cantidad de recursos obtenidos
-]]
-function ExplorerModule:CollectResource(player, islandId, nodeId)
-	-- Buscar isla y nodo
-	for _, island in ipairs(islandDefinitions) do
-		if island.id == islandId then
-			for _, node in ipairs(island.nodes) do
-				if node.nodeId == nodeId and not node.depleted then
-					node.depleted = true
-					-- Ejemplo de recompensa
-					local reward = 10
-					return reward
-				end
+-- Inicia exploración: limpia previa, spawnea isla y teleporta al jugador
+function ExplorerModule:StartExploration(player, islandId)
+	-- buscar definición
+	local def
+	for _, isl in ipairs(globalIslandDefs) do
+		if isl.id == islandId then def = isl; break end
+	end
+	if not def then
+		warn("[ExplorerModule] Isla no encontrada: " .. islandId)
+		return
+	end
+
+	-- limpiar exploración previa
+	if playerExplorations[player.UserId] then
+		playerExplorations[player.UserId].islandModel:Destroy()
+	end
+
+	-- crear modelo de isla
+	local model = Instance.new("Model")
+	model.Name   = player.Name .. "_" .. islandId
+	model.Parent = workspace
+
+	local basePos = Vector3.new(0, 50, 0)
+	local origin  = basePos + Vector3.new((player.UserId % 10) * 60, 0, 0)
+
+	-- teleport
+	if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+		player.Character.HumanoidRootPart.CFrame = CFrame.new(origin + Vector3.new(0, 5, 0))
+	else
+		player.CharacterAdded:Connect(function(char)
+			local hrp = char:WaitForChild("HumanoidRootPart")
+			hrp.CFrame = CFrame.new(origin + Vector3.new(0, 5, 0))
+		end)
+	end
+
+	-- suelo
+	local ground = Instance.new("Part")
+	ground.Name         = "Ground"
+	ground.Size         = Vector3.new(50, 1, 50)
+	ground.Anchored     = true
+	ground.Position     = origin + Vector3.new(0, -1, 0)
+	ground.Parent       = model
+
+	-- nodos con ClickDetector
+	for idx, node in ipairs(def.nodes) do
+		local rock = Instance.new("Part")
+		rock.Name     = node.nodeId
+		rock.Shape    = Enum.PartType.Ball
+		rock.Size     = Vector3.new(4, 4, 4)
+		rock.Anchored = true
+		local angle  = (idx - 1) * (2 * math.pi / #def.nodes)
+		local radius = 15
+		rock.Position = origin + Vector3.new(math.cos(angle) * radius, 2, math.sin(angle) * radius)
+		rock.BrickColor = node.color
+		rock.Parent   = model
+
+		local clickDet = Instance.new("ClickDetector")
+		clickDet.MaxActivationDistance = 32
+		clickDet.Parent = rock
+		clickDet.MouseClick:Connect(function(clicker)
+			if clicker == player then
+				ExplorerModule:CollectResource(player, node.nodeId)
+				ResourceCollectedRE:FireClient(clicker)
 			end
+		end)
+	end
+
+	playerExplorations[player.UserId] = { islandModel = model, definitions = def }
+end
+
+-- Marca nodo como recolectado y recompensa con ArcaneCoins
+function ExplorerModule:CollectResource(player, nodeId)
+	local rec = playerExplorations[player.UserId]
+	if not rec then return end
+	for _, node in ipairs(rec.definitions.nodes) do
+		if node.nodeId == nodeId and not node.depleted then
+			node.depleted = true
+			-- Recompensa aleatoria según rareza
+			local def = RarityDefs[node.rarity]
+			local reward = math.random(def.minReward, def.maxReward)
+			EconomyModule:AddCurrency(player, "ArcaneCoins", reward)
+			return
 		end
 	end
-	return 0
 end
 
---[[
-    Calcula el rendimiento acumulado de bots offline
-    Basado en horas offline (hasta 12h) y número de bots del jugador
-    @param player Player Jugador reconectado
-    @param hoursOffline number Horas desconectado (máx. 12)
-    @return number Cantidad total de recursos obtenidos
-]]
-function ExplorerModule:CalculateOfflineYield(player, hoursOffline)
-	local hours = math.clamp(hoursOffline, 0, 12)
-	-- Obtener número de bots del estado del jugador
-	local success, data = pcall(function()
-		return playerStateStore:GetAsync(player.UserId .. ":BotCount")
+-- Calcula rendimiento offline (remains unchanged)
+function ExplorerModule:CalculateOfflineYield(player, hours)
+	local h = math.min(12, math.max(0, hours))
+	local ok, data = pcall(function()
+		return DataStoreService:GetDataStore("ExplorerState"):GetAsync(player.UserId .. ":BotCount")
 	end)
-	local botCount = (success and data) or 0
-	-- Ejemplo: cada bot genera 5 unidades por hora
-	local yield = botCount * 5 * hours
-	return yield
+	local botCount = (ok and data) or 0
+	return botCount * 5 * h
 end
 
--- Conexión de RemoteFunctions a métodos del módulo (solo servidor)
+-- Conexión de remotes en servidor
 if RunService:IsServer() then
-	CollectResourceRF.OnServerInvoke = function(player, islandId, nodeId)
-		return ExplorerModule:CollectResource(player, islandId, nodeId)
-	end
-	OfflineYieldRF.OnServerInvoke = function(player, hoursOffline)
-		return ExplorerModule:CalculateOfflineYield(player, hoursOffline)
-	end
-end
-
---[[
-    Init: Test básico que se ejecuta en servidor
-    Archivo: ServerScriptService/ExplorerInit.server (Script)
-    Código ejemplo:
-        local srcFolder = game.ServerScriptService:WaitForChild("src")
-        local ExplorerModule = require(srcFolder.Modules.ExplorerModule)
-        ExplorerModule.Init()
-]]
-function ExplorerModule.Init()
-	local success, islands = pcall(function()
-		return ExplorerModule:GenerateIslands(3)
-	end)
-	if success then
-		print("[ExplorerModule] Se generaron " .. #islands .. " islas de prueba.")
-	else
-		warn("[ExplorerModule] Error en Test de generación: ", islands)
-	end
+	StartExplorationRF.OnServerInvoke = function(p, i) ExplorerModule:StartExploration(p, i) end
+	CollectResourceRF.OnServerInvoke  = function(p, n) return ExplorerModule:CollectResource(p, n) end
+	OfflineYieldRF.OnServerInvoke     = function(p, h) return ExplorerModule:CalculateOfflineYield(p, h) end
 end
 
 return ExplorerModule
