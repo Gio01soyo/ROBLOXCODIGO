@@ -10,9 +10,9 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 -- Requerir EconomyModule para suscripción a cambios de balance
-auto srcFolder = game.ServerScriptService:WaitForChild("src")
-auto modulesFolder = srcFolder:WaitForChild("Modules")
-auto EconomyModule = require(modulesFolder:WaitForChild("EconomyModule"))
+local srcFolder = game.ServerScriptService:WaitForChild("src")
+local modulesFolder = srcFolder:WaitForChild("Modules")
+local EconomyModule = require(modulesFolder:WaitForChild("EconomyModule"))
 
 -- Carpeta de remotes UI
 local uiRemotes = ReplicatedStorage:WaitForChild("UIRemotes")
